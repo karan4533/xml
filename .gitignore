@@ -1,0 +1,14 @@
+# Output directory - contains generated files
+output/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# Streamlit config (if contains sensitive data)
+.streamlit/secrets.toml
+
+# Temporary files
+*.tmp
+*.temp
