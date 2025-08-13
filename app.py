@@ -3,6 +3,7 @@
 
 import os
 import io
+import tempfile
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -42,6 +43,12 @@ with st.sidebar:
 
     st.markdown("---")
     outdir = st.text_input("Output directory", value=str(Path.cwd() / "output"))
+    
+    st.subheader("💾 Storage")
+    auto_cleanup = st.checkbox("🧹 Auto-cleanup output files after session", 
+                               value=False, 
+                               help="Automatically delete generated files after viewing (saves disk space)")
+    
     run_btn = st.button("🚀 Run Extraction")
 
 # input section
@@ -92,38 +99,51 @@ if run_btn:
     # ensure outdir exists
     Path(outdir).mkdir(parents=True, exist_ok=True)
 
-    # persist uploaded file to a temp path if needed
-    if pdf_bytes and pdf_name:
-        temp_path = Path(outdir) / f"_upload_{pdf_name}"
-        with open(temp_path, "wb") as f:
-            f.write(pdf_bytes)
-        input_path = str(temp_path)
-    elif server_path:
-        input_path = server_path
-    else:
-        st.error("Please provide a server file path or upload a PDF.")
-        st.stop()
+    # Handle input file (temporary for uploads, direct for server paths)
+    temp_file_handle = None
+    try:
+        if pdf_bytes and pdf_name:
+            # Create temporary file that will be automatically cleaned up
+            temp_file_handle = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+            temp_file_handle.write(pdf_bytes)
+            temp_file_handle.close()
+            input_path = temp_file_handle.name
+            st.info(f"📤 Processing uploaded file: {pdf_name}")
+        elif server_path:
+            input_path = server_path
+        else:
+            st.error("Please provide a server file path or upload a PDF.")
+            st.stop()
 
-    if not os.path.exists(input_path):
-        st.error(f"File not found: {input_path}")
-        st.stop()
+        if not os.path.exists(input_path):
+            st.error(f"File not found: {input_path}")
+            st.stop()
 
-    st.info("Starting extraction… (this may take a while for large PDFs)")
-    prog_bar.progress(0)
+        st.info("Starting extraction… (this may take a while for large PDFs)")
+        prog_bar.progress(0)
 
-    manifest = process_pdf(
-        input_pdf=input_path,
-        outdir=outdir,
-        start_page=int(start_page),
-        end_page=int(end_page),
-        ocr_threshold=int(ocr_threshold),
-        dpi=int(dpi),
-        ocr_lang=ocr_lang.strip(),
-        ocr_psm=str(ocr_psm),
-        ocr_oem=str(ocr_oem),
-        table_order=tbl_order if tbl_order else ["camelot", "tabula"],
-        progress_cb=_progress_cb,
-    )
+        manifest = process_pdf(
+            input_pdf=input_path,
+            outdir=outdir,
+            start_page=int(start_page),
+            end_page=int(end_page),
+            ocr_threshold=int(ocr_threshold),
+            dpi=int(dpi),
+            ocr_lang=ocr_lang.strip(),
+            ocr_psm=str(ocr_psm),
+            ocr_oem=str(ocr_oem),
+            table_order=tbl_order if tbl_order else ["camelot", "tabula"],
+            progress_cb=_progress_cb,
+        )
+    
+    finally:
+        # Clean up temporary file if it was created
+        if temp_file_handle and os.path.exists(temp_file_handle.name):
+            try:
+                os.unlink(temp_file_handle.name)
+                st.success("🧹 Temporary upload file cleaned up")
+            except Exception as e:
+                st.warning(f"Could not clean up temporary file: {e}")
 
     prog_bar.progress(1.0)
     status_text.success("Done!")
@@ -201,3 +221,18 @@ if run_btn:
             st.json(json.loads(man_path.read_text(encoding="utf-8")))
         else:
             st.info("manifest.json not found.")
+    
+    # Optional cleanup
+    if auto_cleanup:
+        st.markdown("---")
+        if st.button("🧹 Clean up output files now", help="Remove all generated files to save disk space"):
+            try:
+                import shutil
+                if Path(outdir).exists():
+                    shutil.rmtree(outdir)
+                    st.success(f"✅ Cleaned up output directory: {outdir}")
+                    st.info("🔄 Refresh the page to process another PDF")
+                else:
+                    st.info("Output directory already clean")
+            except Exception as e:
+                st.error(f"Failed to cleanup: {e}")
