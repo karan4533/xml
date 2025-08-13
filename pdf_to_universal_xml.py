@@ -235,80 +235,85 @@ def process_pdf(
     images_dir.mkdir(parents=True, exist_ok=True)
 
     doc = fitz.open(input_pdf)
-    total_pages = doc.page_count
-    if end_page <= 0 or end_page > total_pages:
-        end_page = total_pages
-    if start_page < 1:
-        start_page = 1
+    try:
+        total_pages = doc.page_count
+        if end_page <= 0 or end_page > total_pages:
+            end_page = total_pages
+        if start_page < 1:
+            start_page = 1
 
-    xml_tree = _build_xml_scaffold(input_pdf, total_pages, start_page, end_page)
+        xml_tree = _build_xml_scaffold(input_pdf, total_pages, start_page, end_page)
 
-    stats = {"pages": 0, "ocr_pages": 0, "images": 0, "tables": 0}
+        stats = {"pages": 0, "ocr_pages": 0, "images": 0, "tables": 0}
 
-    num_pages_to_do = end_page - start_page + 1
-    for idx in range(start_page - 1, end_page):
-        page = doc[idx]
+        num_pages_to_do = end_page - start_page + 1
+        for idx in range(start_page - 1, end_page):
+            page = doc[idx]
 
-        text = page.get_text("text") or ""
-        did_ocr = False
-        if (len(text.strip()) < ocr_threshold) and OCR_AVAILABLE:
-            pil_img = _page_to_image(page, dpi=dpi)
-            ocr_txt = _ocr_image(pil_img, lang=ocr_lang, psm=ocr_psm, oem=ocr_oem)
-            if len(ocr_txt.strip()) > len(text.strip()):
-                text = ocr_txt
-                did_ocr = True
+            text = page.get_text("text") or ""
+            did_ocr = False
+            if (len(text.strip()) < ocr_threshold) and OCR_AVAILABLE:
+                pil_img = _page_to_image(page, dpi=dpi)
+                ocr_txt = _ocr_image(pil_img, lang=ocr_lang, psm=ocr_psm, oem=ocr_oem)
+                if len(ocr_txt.strip()) > len(text.strip()):
+                    text = ocr_txt
+                    did_ocr = True
 
-        imgs = _extract_embedded_images(doc, page, idx, images_dir)
-        stats["images"] += len(imgs)
+            imgs = _extract_embedded_images(doc, page, idx, images_dir)
+            stats["images"] += len(imgs)
 
-        tbls = []
-        try:
-            tbls = _extract_tables_page(input_pdf, idx + 1, table_order, tables_dir)
-        except Exception:
             tbls = []
-        stats["tables"] += len(tbls)
+            try:
+                tbls = _extract_tables_page(input_pdf, idx + 1, table_order, tables_dir)
+            except Exception:
+                tbls = []
+            stats["tables"] += len(tbls)
 
-        _append_page(xml_tree, idx, text, imgs, tbls)
+            _append_page(xml_tree, idx, text, imgs, tbls)
 
-        stats["pages"] += 1
-        if did_ocr:
-            stats["ocr_pages"] += 1
+            stats["pages"] += 1
+            if did_ocr:
+                stats["ocr_pages"] += 1
 
-        if progress_cb:
-            progress_cb(stats["pages"], num_pages_to_do)
+            if progress_cb:
+                progress_cb(stats["pages"], num_pages_to_do)
 
-    xml_path = out_dir / "combined.xml"
-    _safe_write_bytes(xml_path, etree.tostring(xml_tree, pretty_print=True, encoding="utf-8", xml_declaration=True))
+        xml_path = out_dir / "combined.xml"
+        _safe_write_bytes(xml_path, etree.tostring(xml_tree, pretty_print=True, encoding="utf-8", xml_declaration=True))
 
-    manifest = {
-        "input": os.path.abspath(input_pdf),
-        "output_dir": str(out_dir),
-        "xml": str(xml_path),
-        "tables_dir": str(tables_dir),
-        "images_dir": str(images_dir),
-        "pages_processed": stats["pages"],
-        "pages_ocr": stats["ocr_pages"],
-        "images_extracted": stats["images"],
-        "tables_extracted": stats["tables"],
-        "started": _now_iso(),
-        "finished": _now_iso(),
-        "ocr_available": OCR_AVAILABLE,
-        "camelot_available": CAMELOT_AVAILABLE,
-        "tabula_available": TABULA_AVAILABLE,
-        "params": {
-            "start_page": start_page,
-            "end_page": end_page,
-            "ocr_threshold": ocr_threshold,
-            "dpi": dpi,
-            "ocr_lang": ocr_lang,
-            "ocr_psm": ocr_psm,
-            "ocr_oem": ocr_oem,
-            "table_order": table_order,
-        },
-    }
+        manifest = {
+            "input": os.path.abspath(input_pdf),
+            "output_dir": str(out_dir),
+            "xml": str(xml_path),
+            "tables_dir": str(tables_dir),
+            "images_dir": str(images_dir),
+            "pages_processed": stats["pages"],
+            "pages_ocr": stats["ocr_pages"],
+            "images_extracted": stats["images"],
+            "tables_extracted": stats["tables"],
+            "started": _now_iso(),
+            "finished": _now_iso(),
+            "ocr_available": OCR_AVAILABLE,
+            "camelot_available": CAMELOT_AVAILABLE,
+            "tabula_available": TABULA_AVAILABLE,
+            "params": {
+                "start_page": start_page,
+                "end_page": end_page,
+                "ocr_threshold": ocr_threshold,
+                "dpi": dpi,
+                "ocr_lang": ocr_lang,
+                "ocr_psm": ocr_psm,
+                "ocr_oem": ocr_oem,
+                "table_order": table_order,
+            },
+        }
 
-    _safe_write_text(out_dir / "manifest.json", json.dumps(manifest, indent=2))
-    return manifest
+        _safe_write_text(out_dir / "manifest.json", json.dumps(manifest, indent=2))
+        return manifest
+        
+    finally:
+        # Always close the PDF document to free resources
+        doc.close()
 
 
 # CLI entry (optional)

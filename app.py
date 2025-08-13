@@ -188,11 +188,13 @@ if run_btn:
         st.subheader("Downloads")
         if xml_path.exists():
             with open(xml_path, "rb") as f:
-                st.download_button("📥 Download combined.xml", f, file_name="combined.xml", mime="application/xml")
+                xml_data = f.read()
+            st.download_button("📥 Download combined.xml", xml_data, file_name="combined.xml", mime="application/xml")
         manifest_path = Path(outdir) / "manifest.json"
         if manifest_path.exists():
             with open(manifest_path, "rb") as f:
-                st.download_button("📥 Download manifest.json", f, file_name="manifest.json", mime="application/json")
+                manifest_data = f.read()
+            st.download_button("📥 Download manifest.json", manifest_data, file_name="manifest.json", mime="application/json")
 
     with tabs[3]:
         st.subheader("Extracted Images (first 20)")
