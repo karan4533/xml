@@ -49,7 +49,7 @@ with st.sidebar:
     # Session management options
     st.write("**Session Management:**")
     auto_cleanup = st.checkbox("🧹 Auto-cleanup old sessions", 
-                               value=False, 
+                               value=True, 
                                help="Automatically remove old session directories (keeps 5 newest, max 24h age)")
     
     if auto_cleanup:
@@ -108,6 +108,14 @@ def _read_first_n_pages_from_xml(xml_path: Path, n: int):
         st.warning(f"Failed to parse XML preview: {e}")
     return pages
 
+# Initialize session state
+if 'processing_complete' not in st.session_state:
+    st.session_state.processing_complete = False
+if 'manifest' not in st.session_state:
+    st.session_state.manifest = None
+if 'xml_content' not in st.session_state:
+    st.session_state.xml_content = None
+
 # Run
 if run_btn:
     # ensure outdir exists
@@ -148,6 +156,9 @@ if run_btn:
             ocr_oem=str(ocr_oem),
             table_order=tbl_order if tbl_order else ["camelot", "tabula"],
             progress_cb=_progress_cb,
+            auto_cleanup=auto_cleanup,
+            max_sessions=max_sessions,
+            max_age_hours=max_age_hours,
         )
     
     finally:
@@ -161,7 +172,35 @@ if run_btn:
 
     prog_bar.progress(1.0)
     status_text.success("Done!")
+    
+    # Store results in session state
+    st.session_state.processing_complete = True
+    st.session_state.manifest = manifest
+    
+    # Load and store XML content
+    xml_path = Path(manifest["xml"])
+    if xml_path.exists():
+        try:
+            with open(xml_path, "r", encoding="utf-8") as f:
+                st.session_state.xml_content = f.read()
+        except Exception as e:
+            st.warning(f"Could not load XML content: {e}")
+            st.session_state.xml_content = None
 
+# Clear session state button
+if st.session_state.processing_complete:
+    col_clear, col_spacer = st.columns([1, 4])
+    with col_clear:
+        if st.button("🔄 Process New PDF", help="Clear current results and start fresh"):
+            st.session_state.processing_complete = False
+            st.session_state.manifest = None
+            st.session_state.xml_content = None
+            st.rerun()
+
+# Display results if processing is complete
+if st.session_state.processing_complete and st.session_state.manifest:
+    manifest = st.session_state.manifest
+    
     # Summary metrics
     st.success(f"✅ Extraction complete - Session ID: {manifest['session_id']}")
     st.info(f"🔒 **Isolated Processing**: Files stored in session `{manifest['session_id']}` to prevent cross-contamination")
@@ -205,11 +244,10 @@ if run_btn:
     with tabs[2]:
         st.subheader("📄 Combined XML Output")
         
-        if xml_path.exists():
+        if xml_path.exists() and st.session_state.xml_content:
             try:
-                # Read the XML content
-                with open(xml_path, "r", encoding="utf-8") as f:
-                    xml_content = f.read()
+                # Use XML content from session state
+                xml_content = st.session_state.xml_content
                 
                 # Display XML file info
                 file_size = xml_path.stat().st_size
@@ -252,29 +290,49 @@ if run_btn:
                 
                 if display_mode == "🔍 Search & Highlight":
                     # Search functionality
-                    search_term = st.text_input("🔍 Search in XML:", placeholder="Enter text to search...")
+                    search_term = st.text_input("🔍 Search in XML:", placeholder="Enter text to search...", key="xml_search")
                     
-                    if search_term:
-                        # Count occurrences
-                        count = display_content.lower().count(search_term.lower())
+                    if search_term and search_term.strip():
+                        # Count occurrences (case insensitive)
+                        search_lower = search_term.lower().strip()
+                        content_lower = display_content.lower()
+                        count = content_lower.count(search_lower)
+                        
                         if count > 0:
                             st.success(f"Found {count} occurrence(s) of '{search_term}'")
-                            # Simple highlight (note: this is basic and may not work perfectly with XML structure)
-                            highlighted_content = display_content.replace(
-                                search_term, 
-                                f"**{search_term}**"  # Bold highlighting
+                            
+                            # Case insensitive highlighting
+                            import re
+                            # Use regex for case-insensitive replacement
+                            highlighted_content = re.sub(
+                                re.escape(search_term), 
+                                lambda m: f"**{m.group()}**",
+                                display_content, 
+                                flags=re.IGNORECASE
                             )
+                            
                             st.text_area(
                                 "XML Content (with highlights):",
                                 value=highlighted_content,
                                 height=600,
-                                help="Search term highlighted in bold"
+                                help="Search term highlighted in bold (case insensitive)",
+                                key="xml_search_content"
                             )
                         else:
                             st.info(f"No matches found for '{search_term}'")
-                            st.text_area("XML Content:", value=display_content, height=600)
+                            st.text_area(
+                                "XML Content:", 
+                                value=display_content, 
+                                height=600,
+                                key="xml_search_no_match"
+                            )
                     else:
-                        st.text_area("XML Content:", value=display_content, height=600)
+                        st.text_area(
+                            "XML Content:", 
+                            value=display_content, 
+                            height=600,
+                            key="xml_search_empty"
+                        )
                         
                 elif display_mode == "📝 Raw Text":
                     # Raw text display
@@ -282,7 +340,8 @@ if run_btn:
                         "Raw XML Content:",
                         value=display_content,
                         height=600,
-                        help="Plain text view of XML content"
+                        help="Plain text view of XML content",
+                        key="xml_raw_text"
                     )
                     
                 else:  # Formatted XML
@@ -293,15 +352,28 @@ if run_btn:
                         if len(display_content) < 100000:  # Only format smaller files
                             dom = minidom.parseString(display_content)
                             pretty_xml = dom.toprettyxml(indent="  ")
-                            # Remove empty lines
-                            pretty_xml = '\n'.join([line for line in pretty_xml.split('\n') if line.strip()])
+                            # Remove empty lines and XML declaration
+                            lines = pretty_xml.split('\n')
+                            # Skip the XML declaration line and empty lines
+                            filtered_lines = [line for line in lines[1:] if line.strip()]
+                            pretty_xml = '\n'.join(filtered_lines)
                             st.code(pretty_xml, language="xml")
                         else:
                             st.info("File too large for formatting. Showing as plain text.")
-                            st.text_area("XML Content:", value=display_content, height=600)
+                            st.text_area(
+                                "XML Content:", 
+                                value=display_content, 
+                                height=600,
+                                key="xml_formatted_large"
+                            )
                     except Exception as e:
                         st.warning(f"Could not format XML: {e}. Showing as plain text.")
-                        st.text_area("XML Content:", value=display_content, height=600)
+                        st.text_area(
+                            "XML Content:", 
+                            value=display_content, 
+                            height=600,
+                            key="xml_formatted_error"
+                        )
                 
                 # Show truncation notice
                 if not show_full and truncated:

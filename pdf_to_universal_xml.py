@@ -201,7 +201,7 @@ def _build_xml_scaffold(input_pdf: str, total_pages: int, start_page: int, end_p
     return etree.ElementTree(root)
 
 
-def _cleanup_old_sessions(output_dir: Path, max_sessions: int = 5, max_age_hours: int = 24) -> Dict[str, Any]:
+def _cleanup_old_sessions(output_dir: Path, max_sessions: int = 5, max_age_hours: float = 24.0) -> Dict[str, Any]:
     """
     Clean up old session directories to manage disk space.
     
@@ -328,6 +328,9 @@ def process_pdf(
     ocr_oem: str = "3",
     table_order: Optional[List[str]] = None,
     progress_cb: Optional[callable] = None,  # for Streamlit progress
+    auto_cleanup: bool = False,
+    max_sessions: int = 5,
+    max_age_hours: float = 24.0,
 ) -> Dict[str, Any]:
     """
     Streaming processor. Returns manifest dict.
@@ -437,8 +440,10 @@ def process_pdf(
 
         _safe_write_text(out_dir / "manifest.json", json.dumps(manifest, indent=2))
         
-        # Optional: Clean up old sessions automatically
-        cleanup_stats = _cleanup_old_sessions(out_dir, max_sessions=5, max_age_hours=24)
+        # Optional: Clean up old sessions automatically (only if enabled)
+        cleanup_stats = {}
+        if auto_cleanup:
+            cleanup_stats = _cleanup_old_sessions(out_dir, max_sessions=max_sessions, max_age_hours=max_age_hours)
         
         # Add cleanup stats to manifest for transparency
         manifest["cleanup_stats"] = cleanup_stats
