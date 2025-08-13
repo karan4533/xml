@@ -45,9 +45,23 @@ with st.sidebar:
     outdir = st.text_input("Output directory", value=str(Path.cwd() / "output"))
     
     st.subheader("💾 Storage")
-    auto_cleanup = st.checkbox("🧹 Auto-cleanup output files after session", 
+    
+    # Session management options
+    st.write("**Session Management:**")
+    auto_cleanup = st.checkbox("🧹 Auto-cleanup old sessions", 
                                value=False, 
-                               help="Automatically delete generated files after viewing (saves disk space)")
+                               help="Automatically remove old session directories (keeps 5 newest, max 24h age)")
+    
+    if auto_cleanup:
+        col1, col2 = st.columns(2)
+        max_sessions = col1.number_input("Max sessions to keep", min_value=1, max_value=20, value=5)
+        max_age_hours = col2.number_input("Max age (hours)", min_value=0.5, max_value=168.0, value=24.0, step=0.5)
+    else:
+        max_sessions, max_age_hours = 5, 24
+    
+    manual_cleanup = st.checkbox("🗑️ Manual cleanup after viewing", 
+                                  value=False, 
+                                  help="Show cleanup button after processing")
     
     run_btn = st.button("🚀 Run Extraction")
 
@@ -149,7 +163,9 @@ if run_btn:
     status_text.success("Done!")
 
     # Summary metrics
-    st.success("✅ Extraction complete")
+    st.success(f"✅ Extraction complete - Session ID: {manifest['session_id']}")
+    st.info(f"🔒 **Isolated Processing**: Files stored in session `{manifest['session_id']}` to prevent cross-contamination")
+    
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Pages processed", manifest["pages_processed"])
     col2.metric("Pages OCR'd", manifest["pages_ocr"])
@@ -160,11 +176,13 @@ if run_btn:
     tables_dir = Path(manifest["tables_dir"])
     images_dir = Path(manifest["images_dir"])
 
-    tabs = st.tabs(["Overview", "Preview Pages", "Downloads", "Images", "Tables", "Manifest"])
+    tabs = st.tabs(["Overview", "Preview Pages", "XML Output", "Downloads", "Images", "Tables", "Manifest"])
     with tabs[0]:
         st.json({
             "input": manifest["input"],
             "output_dir": manifest["output_dir"],
+            "session_id": manifest["session_id"],
+            "session_dir": manifest["session_dir"],
             "xml": manifest["xml"],
             "tables_dir": manifest["tables_dir"],
             "images_dir": manifest["images_dir"],
@@ -209,11 +227,60 @@ if run_btn:
         st.subheader("Table Files (first 20)")
         tpaths = sorted(tables_dir.glob("*.xml"))[:20]
         if tpaths:
+            st.caption(f"Showing {len(tpaths)} of {len(list(tables_dir.glob('*.xml')))} table files.")
+            st.info(f"🔒 **Session Isolation**: Tables stored in isolated session `{manifest['session_id']}` directory")
+            
+            # Create columns for better layout
+            col1, col2, col3 = st.columns([2, 1, 1])
+            col1.write("**File Name**")
+            col2.write("**Size**")
+            col3.write("**Download**")
+            
             for p in tpaths:
-                with open(p, "rb") as f:
-                    st.download_button(label=f"Download {p.name}", data=f.read(), file_name=p.name, mime="application/xml", key=str(p))
+                col1, col2, col3 = st.columns([2, 1, 1])
+                
+                # Extract page and table info from filename
+                filename_parts = p.stem.split('_')
+                if len(filename_parts) >= 4:  # page_XXXXXX_table_XXX
+                    page_num = filename_parts[1]
+                    table_num = filename_parts[3]
+                    display_name = f"Page {int(page_num):,} - Table {int(table_num)}"
+                else:
+                    display_name = p.name
+                
+                col1.write(display_name)
+                
+                # File size
+                try:
+                    size_bytes = p.stat().st_size
+                    if size_bytes < 1024:
+                        size_str = f"{size_bytes}B"
+                    elif size_bytes < 1024*1024:
+                        size_str = f"{size_bytes/1024:.1f}KB"
+                    else:
+                        size_str = f"{size_bytes/(1024*1024):.1f}MB"
+                    col2.write(size_str)
+                except:
+                    col2.write("N/A")
+                
+                # Download button
+                with col3:
+                    with open(p, "rb") as f:
+                        file_data = f.read()
+                    st.download_button(
+                        label="📥",
+                        data=file_data,
+                        file_name=p.name,
+                        mime="application/xml",
+                        key=str(p),
+                        help=f"Download {p.name}"
+                    )
         else:
             st.info("No tables detected (or no table engine available).")
+            st.write("💡 **Tips for better table detection:**")
+            st.write("- Ensure your PDF contains clear, structured tables")
+            st.write("- Try different table engines (Camelot vs Tabula)")
+            st.write("- Check if tables are text-based rather than image-based")
 
     with tabs[5]:
         st.subheader("Manifest")
@@ -224,17 +291,73 @@ if run_btn:
         else:
             st.info("manifest.json not found.")
     
-    # Optional cleanup
-    if auto_cleanup:
+    # Session cleanup information and manual controls
+    if manual_cleanup:
         st.markdown("---")
-        if st.button("🧹 Clean up output files now", help="Remove all generated files to save disk space"):
+        st.subheader("🧹 Session Management")
+        
+        # Show current session info
+        session_path = Path(manifest['session_dir'])
+        if session_path.exists():
             try:
-                import shutil
-                if Path(outdir).exists():
-                    shutil.rmtree(outdir)
-                    st.success(f"✅ Cleaned up output directory: {outdir}")
-                    st.info("🔄 Refresh the page to process another PDF")
-                else:
-                    st.info("Output directory already clean")
-            except Exception as e:
-                st.error(f"Failed to cleanup: {e}")
+                from pdf_to_universal_xml import _get_directory_size_mb
+                session_size = _get_directory_size_mb(session_path)
+                st.info(f"💾 Current session size: **{session_size:.1f} MB**")
+            except:
+                st.info("💾 Current session is active")
+        
+        # Manual session cleanup
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("🗑️ Delete Current Session", help="Remove this session's files to save disk space"):
+                try:
+                    import shutil
+                    if session_path.exists():
+                        shutil.rmtree(session_path)
+                        st.success(f"✅ Deleted session {manifest['session_id']}")
+                        st.info("🔄 Refresh the page to process another PDF")
+                        st.rerun()
+                    else:
+                        st.info("Session already cleaned up")
+                except Exception as e:
+                    st.error(f"Failed to delete session: {e}")
+        
+        with col2:
+            if st.button("🧹 Cleanup All Old Sessions", help="Remove all old sessions based on settings"):
+                try:
+                    from pdf_to_universal_xml import _cleanup_old_sessions
+                    cleanup_stats = _cleanup_old_sessions(Path(outdir), max_sessions, max_age_hours)
+                    
+                    if cleanup_stats['sessions_removed'] > 0:
+                        st.success(f"✅ Cleaned up {cleanup_stats['sessions_removed']} old sessions")
+                        st.info(f"💾 Freed {cleanup_stats['space_freed_mb']:.1f} MB of disk space")
+                        st.info(f"📁 Kept {cleanup_stats['sessions_kept']} recent sessions")
+                    else:
+                        st.info("No old sessions to clean up")
+                except Exception as e:
+                    st.error(f"Failed to cleanup old sessions: {e}")
+    
+    # Show automatic cleanup info and stats
+    if auto_cleanup and 'cleanup_stats' in manifest:
+        st.markdown("---")
+        st.subheader("⚙️ Automatic Cleanup Report")
+        
+        cleanup_stats = manifest['cleanup_stats']
+        
+        if cleanup_stats['sessions_removed'] > 0:
+            st.success(f"🧹 **Auto-cleanup completed**: Removed {cleanup_stats['sessions_removed']} old sessions")
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Sessions Found", cleanup_stats['sessions_found'])
+            col2.metric("Sessions Removed", cleanup_stats['sessions_removed'])
+            col3.metric("Space Freed", f"{cleanup_stats['space_freed_mb']:.1f} MB")
+            
+            if cleanup_stats['cleanup_reason']:
+                st.info("📝 **Cleanup Details**: " + ", ".join(cleanup_stats['cleanup_reason']))
+        else:
+            st.info("⚙️ **Auto-cleanup**: No old sessions found to remove")
+            st.caption(f"Settings: Keep {max_sessions} sessions, max {max_age_hours}h age")
+    elif auto_cleanup:
+        st.markdown("---")
+        st.info(f"⚙️ **Auto-cleanup enabled**: Keeping {max_sessions} newest sessions, max {max_age_hours}h age")

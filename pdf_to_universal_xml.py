@@ -125,20 +125,29 @@ def _extract_embedded_images(doc, page, page_index: int, outdir: Path) -> List[D
 
 def _extract_tables_page(pdf_path: str, page_number_1based: int, table_order: List[str], tables_dir: Path) -> List[Dict[str, Any]]:
     found_tables = []
+    global_table_index = 1  # Global counter for consistent table numbering
 
     def export_tables_camelot(flavor: str) -> List[Dict[str, Any]]:
+        nonlocal global_table_index
         out = []
         try:
             tables = camelot.read_pdf(pdf_path, pages=str(page_number_1based), flavor=flavor, suppress_stdout=True)
             for i, t in enumerate(tables):
-                xml_path = tables_dir / f"page_{page_number_1based:06d}_table_{len(out)+1:03d}.xml"
+                xml_path = tables_dir / f"page_{page_number_1based:06d}_table_{global_table_index:03d}.xml"
                 t.to_xml(str(xml_path))
-                out.append({"engine": f"camelot-{flavor}", "path": str(xml_path)})
+                out.append({
+                    "engine": f"camelot-{flavor}", 
+                    "path": str(xml_path),
+                    "index": global_table_index,
+                    "page": page_number_1based
+                })
+                global_table_index += 1
         except Exception:
             pass
         return out
 
     def export_tables_tabula() -> List[Dict[str, Any]]:
+        nonlocal global_table_index
         out = []
         try:
             dfs = tabula.read_pdf(pdf_path, pages=page_number_1based, multiple_tables=True, guess=True, lattice=False, stream=True)
@@ -149,9 +158,15 @@ def _extract_tables_page(pdf_path: str, page_number_1based: int, table_order: Li
                     for cell in row:
                         cell_el = etree.SubElement(row_el, "td")
                         cell_el.text = "" if (cell is None or (isinstance(cell, float) and math.isnan(cell))) else str(cell)
-                xml_path = tables_dir / f"page_{page_number_1based:06d}_table_{len(out)+1:03d}.xml"
+                xml_path = tables_dir / f"page_{page_number_1based:06d}_table_{global_table_index:03d}.xml"
                 _safe_write_bytes(xml_path, etree.tostring(root, pretty_print=True, encoding="utf-8", xml_declaration=True))
-                out.append({"engine": "tabula", "path": str(xml_path)})
+                out.append({
+                    "engine": "tabula", 
+                    "path": str(xml_path),
+                    "index": global_table_index,
+                    "page": page_number_1based
+                })
+                global_table_index += 1
         except Exception:
             pass
         return out
@@ -184,6 +199,97 @@ def _build_xml_scaffold(input_pdf: str, total_pages: int, start_page: int, end_p
     etree.SubElement(file_meta, "end_page").text = str(end_page)
     etree.SubElement(root, "content")
     return etree.ElementTree(root)
+
+
+def _cleanup_old_sessions(output_dir: Path, max_sessions: int = 5, max_age_hours: int = 24) -> Dict[str, Any]:
+    """
+    Clean up old session directories to manage disk space.
+    
+    Args:
+        output_dir: Main output directory containing session folders
+        max_sessions: Maximum number of sessions to keep (oldest removed first)
+        max_age_hours: Maximum age in hours before session is eligible for cleanup
+    
+    Returns:
+        Dict with cleanup statistics
+    """
+    import time
+    import shutil
+    
+    cleanup_stats = {
+        "sessions_found": 0,
+        "sessions_removed": 0,
+        "sessions_kept": 0,
+        "space_freed_mb": 0,
+        "cleanup_reason": []
+    }
+    
+    try:
+        if not output_dir.exists():
+            return cleanup_stats
+            
+        # Find all session directories
+        session_dirs = [d for d in output_dir.iterdir() 
+                       if d.is_dir() and d.name.startswith('session_')]
+        
+        cleanup_stats["sessions_found"] = len(session_dirs)
+        
+        if len(session_dirs) <= 1:  # Keep at least current session
+            cleanup_stats["sessions_kept"] = len(session_dirs)
+            return cleanup_stats
+        
+        # Sort by modification time (newest first)
+        session_dirs.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+        
+        current_time = time.time()
+        sessions_to_remove = []
+        
+        # Strategy 1: Remove sessions older than max_age_hours
+        for session_dir in session_dirs:
+            age_hours = (current_time - session_dir.stat().st_mtime) / 3600
+            if age_hours > max_age_hours:
+                sessions_to_remove.append((session_dir, f"aged_{age_hours:.1f}h"))
+        
+        # Strategy 2: Keep only max_sessions newest sessions
+        if len(session_dirs) > max_sessions:
+            excess_sessions = session_dirs[max_sessions:]
+            for session_dir in excess_sessions:
+                if not any(s[0] == session_dir for s in sessions_to_remove):
+                    sessions_to_remove.append((session_dir, "excess_count"))
+        
+        # Remove identified sessions
+        for session_dir, reason in sessions_to_remove:
+            try:
+                # Calculate size before removal
+                size_mb = _get_directory_size_mb(session_dir)
+                
+                shutil.rmtree(session_dir)
+                cleanup_stats["sessions_removed"] += 1
+                cleanup_stats["space_freed_mb"] += size_mb
+                cleanup_stats["cleanup_reason"].append(f"{session_dir.name}:{reason}")
+                
+            except Exception as e:
+                # Log error but continue cleanup
+                cleanup_stats["cleanup_reason"].append(f"{session_dir.name}:error_{str(e)[:50]}")
+        
+        cleanup_stats["sessions_kept"] = cleanup_stats["sessions_found"] - cleanup_stats["sessions_removed"]
+        
+    except Exception as e:
+        cleanup_stats["cleanup_reason"].append(f"cleanup_error:{str(e)[:50]}")
+    
+    return cleanup_stats
+
+
+def _get_directory_size_mb(directory: Path) -> float:
+    """Calculate total size of directory in MB."""
+    total_size = 0
+    try:
+        for path in directory.rglob('*'):
+            if path.is_file():
+                total_size += path.stat().st_size
+    except Exception:
+        pass
+    return total_size / (1024 * 1024)
 
 
 def _append_page(tree: etree._ElementTree, page_index: int, text: str, images: List[Dict[str, Any]], tables: List[Dict[str, Any]]):
@@ -228,11 +334,30 @@ def process_pdf(
     """
     table_order = table_order or ["camelot", "tabula"]
     out_dir = Path(outdir)
-    tables_dir = out_dir / "tables"
-    images_dir = out_dir / "assets" / "images"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create session-based directory structure to prevent cross-contamination
+    import time
+    import hashlib
+    
+    # Generate unique session ID based on input file and timestamp
+    session_id = hashlib.md5(f"{input_pdf}_{time.time()}_{start_page}_{end_page}".encode()).hexdigest()[:12]
+    
+    # Create session-specific subdirectories
+    session_dir = out_dir / f"session_{session_id}"
+    tables_dir = session_dir / "tables"
+    images_dir = session_dir / "assets" / "images"
+    
+    # Clear and recreate directories to ensure clean state
+    import shutil
+    if session_dir.exists():
+        shutil.rmtree(session_dir)
+        
+    session_dir.mkdir(parents=True, exist_ok=True)
     tables_dir.mkdir(parents=True, exist_ok=True)
     images_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Also ensure main output directory exists
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     doc = fitz.open(input_pdf)
     try:
@@ -278,12 +403,14 @@ def process_pdf(
             if progress_cb:
                 progress_cb(stats["pages"], num_pages_to_do)
 
-        xml_path = out_dir / "combined.xml"
+        xml_path = session_dir / "combined.xml"
         _safe_write_bytes(xml_path, etree.tostring(xml_tree, pretty_print=True, encoding="utf-8", xml_declaration=True))
 
         manifest = {
             "input": os.path.abspath(input_pdf),
             "output_dir": str(out_dir),
+            "session_dir": str(session_dir),
+            "session_id": session_id,
             "xml": str(xml_path),
             "tables_dir": str(tables_dir),
             "images_dir": str(images_dir),
@@ -309,6 +436,13 @@ def process_pdf(
         }
 
         _safe_write_text(out_dir / "manifest.json", json.dumps(manifest, indent=2))
+        
+        # Optional: Clean up old sessions automatically
+        cleanup_stats = _cleanup_old_sessions(out_dir, max_sessions=5, max_age_hours=24)
+        
+        # Add cleanup stats to manifest for transparency
+        manifest["cleanup_stats"] = cleanup_stats
+        
         return manifest
         
     finally:
