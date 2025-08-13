@@ -203,6 +203,117 @@ if run_btn:
             st.info("Set preview_pages > 0 in the sidebar to see a quick preview.")
 
     with tabs[2]:
+        st.subheader("📄 Combined XML Output")
+        
+        if xml_path.exists():
+            try:
+                # Read the XML content
+                with open(xml_path, "r", encoding="utf-8") as f:
+                    xml_content = f.read()
+                
+                # Display XML file info
+                file_size = xml_path.stat().st_size
+                if file_size < 1024:
+                    size_str = f"{file_size} bytes"
+                elif file_size < 1024*1024:
+                    size_str = f"{file_size/1024:.1f} KB"
+                else:
+                    size_str = f"{file_size/(1024*1024):.1f} MB"
+                
+                st.info(f"📊 **File**: `combined.xml` | **Size**: {size_str} | **Session**: {manifest['session_id']}")
+                
+                # Option to show full XML or truncated
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    show_full = st.checkbox("Show full XML content", value=False, help="Warning: Large files may slow down the browser")
+                with col2:
+                    st.download_button("📥 Download XML", xml_content.encode(), file_name="combined.xml", mime="application/xml")
+                
+                # Display options
+                display_mode = st.radio(
+                    "Display format:",
+                    ["🖥️ Formatted XML", "📝 Raw Text", "🔍 Search & Highlight"],
+                    horizontal=True
+                )
+                
+                # Determine content to display
+                if show_full:
+                    display_content = xml_content
+                    st.warning(f"⚠️ Showing full content ({size_str}). This may take time to load for large files.")
+                else:
+                    # Show first 50KB for preview
+                    max_chars = 50000
+                    if len(xml_content) > max_chars:
+                        display_content = xml_content[:max_chars]
+                        truncated = True
+                    else:
+                        display_content = xml_content
+                        truncated = False
+                
+                if display_mode == "🔍 Search & Highlight":
+                    # Search functionality
+                    search_term = st.text_input("🔍 Search in XML:", placeholder="Enter text to search...")
+                    
+                    if search_term:
+                        # Count occurrences
+                        count = display_content.lower().count(search_term.lower())
+                        if count > 0:
+                            st.success(f"Found {count} occurrence(s) of '{search_term}'")
+                            # Simple highlight (note: this is basic and may not work perfectly with XML structure)
+                            highlighted_content = display_content.replace(
+                                search_term, 
+                                f"**{search_term}**"  # Bold highlighting
+                            )
+                            st.text_area(
+                                "XML Content (with highlights):",
+                                value=highlighted_content,
+                                height=600,
+                                help="Search term highlighted in bold"
+                            )
+                        else:
+                            st.info(f"No matches found for '{search_term}'")
+                            st.text_area("XML Content:", value=display_content, height=600)
+                    else:
+                        st.text_area("XML Content:", value=display_content, height=600)
+                        
+                elif display_mode == "📝 Raw Text":
+                    # Raw text display
+                    st.text_area(
+                        "Raw XML Content:",
+                        value=display_content,
+                        height=600,
+                        help="Plain text view of XML content"
+                    )
+                    
+                else:  # Formatted XML
+                    # Try to format XML nicely
+                    try:
+                        import xml.dom.minidom as minidom
+                        # Parse and pretty print (only for smaller content)
+                        if len(display_content) < 100000:  # Only format smaller files
+                            dom = minidom.parseString(display_content)
+                            pretty_xml = dom.toprettyxml(indent="  ")
+                            # Remove empty lines
+                            pretty_xml = '\n'.join([line for line in pretty_xml.split('\n') if line.strip()])
+                            st.code(pretty_xml, language="xml")
+                        else:
+                            st.info("File too large for formatting. Showing as plain text.")
+                            st.text_area("XML Content:", value=display_content, height=600)
+                    except Exception as e:
+                        st.warning(f"Could not format XML: {e}. Showing as plain text.")
+                        st.text_area("XML Content:", value=display_content, height=600)
+                
+                # Show truncation notice
+                if not show_full and truncated:
+                    st.info(f"📄 Showing first {max_chars:,} characters. Enable 'Show full XML content' to see everything.")
+                    
+            except Exception as e:
+                st.error(f"Failed to read XML file: {e}")
+                
+        else:
+            st.error("XML file not found. Please run the extraction first.")
+
+    with tabs[3]:
         st.subheader("Downloads")
         if xml_path.exists():
             with open(xml_path, "rb") as f:
@@ -214,7 +325,7 @@ if run_btn:
                 manifest_data = f.read()
             st.download_button("📥 Download manifest.json", manifest_data, file_name="manifest.json", mime="application/json")
 
-    with tabs[3]:
+    with tabs[4]:
         st.subheader("Extracted Images (first 20)")
         imgs = sorted(images_dir.glob("*.png"))[:20]
         if imgs:
@@ -223,7 +334,7 @@ if run_btn:
         else:
             st.info("No embedded images found (or engine skipped).")
 
-    with tabs[4]:
+    with tabs[5]:
         st.subheader("Table Files (first 20)")
         tpaths = sorted(tables_dir.glob("*.xml"))[:20]
         if tpaths:
@@ -282,7 +393,7 @@ if run_btn:
             st.write("- Try different table engines (Camelot vs Tabula)")
             st.write("- Check if tables are text-based rather than image-based")
 
-    with tabs[5]:
+    with tabs[6]:
         st.subheader("Manifest")
         man_path = Path(outdir) / "manifest.json"
         if man_path.exists():
