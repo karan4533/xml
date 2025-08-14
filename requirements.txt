@@ -8,3 +8,10 @@ camelot-py[cv]
 tabula-py
 pandas
 numpy
+
+
+Running command:
+
+    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+    . .\.venv\Scripts\Activate
+    streamlit run app.py
