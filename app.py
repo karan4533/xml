@@ -237,7 +237,7 @@ if st.session_state.processing_complete and st.session_state.manifest:
             pages = _read_first_n_pages_from_xml(xml_path, preview_pages)
             for p in pages:
                 with st.expander(f"📄 Page {p['index']}"):
-                    st.text_area("Text", value=(p["text"][:10000] + ("..." if len(p["text"]) > 10000 else "")), height=240)
+                  st.text_area("Text", value=(p["text"][:10000] + ("..." if len(p["text"]) > 10000 else "")), height=240, key=f"text_{p['index']}")
         else:
             st.info("Set preview_pages > 0 in the sidebar to see a quick preview.")
 
