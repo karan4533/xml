@@ -298,7 +298,12 @@ def _append_page(tree: etree._ElementTree, page_index: int, text: str, images: L
     p = etree.SubElement(content, "page", index=str(page_index + 1))
 
     txt_el = etree.SubElement(p, "text")
-    txt_el.text = etree.CDATA((text or "").replace("\u0000", "").replace("\r", "").strip())
+    import re
+    def clean_xml_text(s):
+        # Remove all control characters except tab(\t), newline(\n), carriage return(\r)
+        return re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F]', '', s)
+    cleaned_text = clean_xml_text((text or "").replace("\r", "").strip())
+    txt_el.text = etree.CDATA(cleaned_text)
 
     if images:
         imgs_el = etree.SubElement(p, "images")

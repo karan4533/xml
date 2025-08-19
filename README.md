@@ -52,8 +52,7 @@ cd xml-main
 ### **2. Create Virtual Environment**
 ```bash
 # Windows
-python -m venv .venv
-.venv\Scripts\activate
+
 
 # Linux/Mac
 python3 -m venv .venv
