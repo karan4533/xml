@@ -38,6 +38,8 @@ try:
     from PIL import Image
     import numpy as np
     import cv2
+    # Set Tesseract path to make OCR functionality work on Windows
+    pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
     OCR_AVAILABLE = True
 except Exception:
     OCR_AVAILABLE = False

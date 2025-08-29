@@ -9,8 +9,9 @@ import xml.etree.ElementTree as ET
 
 import streamlit as st
 
-# If you installed Tesseract in a custom path, uncomment & edit the next line:
-# import pytesseract; pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+# Set Tesseract path to make OCR functionality work
+import pytesseract
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 from pdf_to_universal_xml import process_pdf  # our backend
 
